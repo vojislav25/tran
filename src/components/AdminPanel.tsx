@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Save, RotateCcw, X, DollarSign, Edit3, Plus, Trash2 } from 'lucide-react';
-import { RoutePrice, getPrices, savePrices, resetPrices } from '../utils/priceStorage';
+import { Save, RotateCcw, X, DollarSign, Edit3, Plus, Trash2, Check, AlertCircle } from 'lucide-react';
+import { RoutePrice, getPrices, savePrices, resetPrices, updateRoute, deleteRoute, addRoute } from '../utils/priceStorage';
 import { translations } from '../utils/translations';
 
 interface AdminPanelProps {
@@ -16,6 +16,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingData, setEditingData] = useState<RoutePrice | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [newRoute, setNewRoute] = useState({
     id: '',
     price: '',
@@ -35,29 +36,47 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     }
   }, [isOpen]);
 
+  // Auto-hide notifications
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => {
+        setNotification(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
+
+  const showNotification = (type: 'success' | 'error', message: string) => {
+    setNotification({ type, message });
+  };
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (loginForm.username === 'admin' && loginForm.password === ADMIN_PASSWORD) {
       setIsAuthenticated(true);
       setLoginError('');
+      showNotification('success', 'Uspešno ste se prijavili!');
     } else {
       setLoginError('Neispravni podaci za prijavu');
     }
   };
 
-  const handleSave = () => {
-    savePrices(prices);
-    // Dispatch custom event to update prices in real-time
-    window.dispatchEvent(new Event('pricesUpdated'));
-    alert('Cene su uspešno sačuvane!');
+  const handleSave = async () => {
+    const success = await savePrices(prices);
+    if (success) {
+      window.dispatchEvent(new Event('pricesUpdated'));
+      showNotification('success', 'Cene su uspešno sačuvane!');
+    } else {
+      showNotification('error', 'Greška pri čuvanju cena!');
+    }
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     if (confirm('Da li ste sigurni da želite da resetujete sve cene na početne vrednosti?')) {
       resetPrices();
       setPrices(getPrices());
       window.dispatchEvent(new Event('pricesUpdated'));
-      alert('Cene su resetovane na početne vrednosti!');
+      showNotification('success', 'Cene su resetovane na početne vrednosti!');
     }
   };
 
@@ -66,15 +85,26 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     setEditingData({ ...route });
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (editingId && editingData) {
-      setPrices(prev => prev.map(price => 
-        price.id === editingId 
-          ? editingData
-          : price
-      ));
-      setEditingId(null);
-      setEditingData(null);
+      const success = await updateRoute(editingId, editingData);
+      if (success) {
+        setPrices(prev => prev.map(price => 
+          price.id === editingId ? editingData : price
+        ));
+        
+        // Update translations if ID changed
+        if (editingId !== editingData.id) {
+          updateTranslationsForRoute(editingId, editingData.id);
+        }
+        
+        setEditingId(null);
+        setEditingData(null);
+        window.dispatchEvent(new Event('pricesUpdated'));
+        showNotification('success', 'Transfer je uspešno ažuriran!');
+      } else {
+        showNotification('error', 'Greška pri ažuriranju transfera!');
+      }
     }
   };
 
@@ -83,11 +113,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     setEditingData(null);
   };
 
-  const handleAddRoute = () => {
+  const handleAddRoute = async () => {
     if (newRoute.id && newRoute.price && newRoute.namesr) {
       // Check if ID already exists
       if (prices.some(p => p.id === newRoute.id)) {
-        alert('Transfer sa ovim ID već postoji!');
+        showNotification('error', 'Transfer sa ovim ID već postoji!');
         return;
       }
 
@@ -99,98 +129,131 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         priceDescription: newRoute.priceDescription
       };
 
-      // Add to prices array
-      const updatedPrices = [...prices, newRouteData];
-      setPrices(updatedPrices);
+      const success = await addRoute(newRouteData);
+      if (success) {
+        // Add to local state
+        const updatedPrices = [...prices, newRouteData];
+        setPrices(updatedPrices);
 
-      // Save prices immediately
-      savePrices(updatedPrices);
+        // Add translations to localStorage
+        updateTranslationsForNewRoute(newRoute);
 
-      // Add translations to localStorage
-      const existingTranslations = JSON.parse(localStorage.getItem('transferko-translations') || '{}');
-      
-      const updatedTranslations = {
-        ...existingTranslations,
-        sr: {
-          ...existingTranslations.sr,
-          routes: {
-            ...existingTranslations.sr?.routes,
-            [newRoute.id]: newRoute.namesr
-          },
-          whatsappMessages: {
-            ...existingTranslations.sr?.whatsappMessages,
-            [newRoute.id]: `Zdravo! Zainteresovan/a sam za transfer ${newRoute.namesr}.`
-          }
-        },
-        en: {
-          ...existingTranslations.en,
-          routes: {
-            ...existingTranslations.en?.routes,
-            [newRoute.id]: newRoute.nameen || newRoute.namesr
-          },
-          whatsappMessages: {
-            ...existingTranslations.en?.whatsappMessages,
-            [newRoute.id]: `Hello! I am interested in transfer ${newRoute.nameen || newRoute.namesr}.`
-          }
-        },
-        ru: {
-          ...existingTranslations.ru,
-          routes: {
-            ...existingTranslations.ru?.routes,
-            [newRoute.id]: newRoute.nameru || newRoute.namesr
-          },
-          whatsappMessages: {
-            ...existingTranslations.ru?.whatsappMessages,
-            [newRoute.id]: `Здравствуйте! Меня интересует трансфер ${newRoute.nameru || newRoute.namesr}.`
-          }
-        }
-      };
+        // Dispatch event to update UI
+        window.dispatchEvent(new Event('pricesUpdated'));
 
-      localStorage.setItem('transferko-translations', JSON.stringify(updatedTranslations));
-
-      // Dispatch event to update UI
-      window.dispatchEvent(new Event('pricesUpdated'));
-
-      // Reset form
-      setNewRoute({
-        id: '',
-        price: '',
-        icon: '🚗',
-        priceDescription: 'po vozilu (do 3 osobe + 1500 po osobi)',
-        namesr: '',
-        nameen: '',
-        nameru: ''
-      });
-      setShowAddForm(false);
-      
-      alert('Novi transfer je uspešno dodat i sačuvan!');
+        // Reset form
+        setNewRoute({
+          id: '',
+          price: '',
+          icon: '🚗',
+          priceDescription: 'po vozilu (do 3 osobe + 1500 po osobi)',
+          namesr: '',
+          nameen: '',
+          nameru: ''
+        });
+        setShowAddForm(false);
+        
+        showNotification('success', 'Novi transfer je uspešno dodat!');
+      } else {
+        showNotification('error', 'Greška pri dodavanju novog transfera!');
+      }
     } else {
-      alert('Molimo unesite sve obavezne podatke (ID, cena, naziv na srpskom)');
+      showNotification('error', 'Molimo unesite sve obavezne podatke (ID, cena, naziv na srpskom)');
     }
   };
 
-  const handleDeleteRoute = (routeId: string) => {
+  const handleDeleteRoute = async (routeId: string) => {
     if (confirm('Da li ste sigurni da želite da obrišete ovaj transfer?')) {
-      const updatedPrices = prices.filter(p => p.id !== routeId);
-      setPrices(updatedPrices);
-      savePrices(updatedPrices);
-      
-      // Remove from translations
-      const existingTranslations = JSON.parse(localStorage.getItem('transferko-translations') || '{}');
-      
-      ['sr', 'en', 'ru'].forEach(lang => {
-        if (existingTranslations[lang]?.routes) {
-          delete existingTranslations[lang].routes[routeId];
-        }
-        if (existingTranslations[lang]?.whatsappMessages) {
-          delete existingTranslations[lang].whatsappMessages[routeId];
-        }
-      });
-
-      localStorage.setItem('transferko-translations', JSON.stringify(existingTranslations));
-      window.dispatchEvent(new Event('pricesUpdated'));
-      alert('Transfer je obrisan!');
+      const success = await deleteRoute(routeId);
+      if (success) {
+        setPrices(prev => prev.filter(p => p.id !== routeId));
+        
+        // Remove from translations
+        removeTranslationsForRoute(routeId);
+        
+        window.dispatchEvent(new Event('pricesUpdated'));
+        showNotification('success', 'Transfer je uspešno obrisan!');
+      } else {
+        showNotification('error', 'Greška pri brisanju transfera!');
+      }
     }
+  };
+
+  const updateTranslationsForNewRoute = (route: typeof newRoute) => {
+    const existingTranslations = JSON.parse(localStorage.getItem('transferko-translations') || '{}');
+    
+    const updatedTranslations = {
+      ...existingTranslations,
+      sr: {
+        ...existingTranslations.sr,
+        routes: {
+          ...existingTranslations.sr?.routes,
+          [route.id]: route.namesr
+        },
+        whatsappMessages: {
+          ...existingTranslations.sr?.whatsappMessages,
+          [route.id]: `Zdravo! Zainteresovan/a sam za transfer ${route.namesr}.`
+        }
+      },
+      en: {
+        ...existingTranslations.en,
+        routes: {
+          ...existingTranslations.en?.routes,
+          [route.id]: route.nameen || route.namesr
+        },
+        whatsappMessages: {
+          ...existingTranslations.en?.whatsappMessages,
+          [route.id]: `Hello! I am interested in transfer ${route.nameen || route.namesr}.`
+        }
+      },
+      ru: {
+        ...existingTranslations.ru,
+        routes: {
+          ...existingTranslations.ru?.routes,
+          [route.id]: route.nameru || route.namesr
+        },
+        whatsappMessages: {
+          ...existingTranslations.ru?.whatsappMessages,
+          [route.id]: `Здравствуйте! Меня интересует трансфер ${route.nameru || route.namesr}.`
+        }
+      }
+    };
+
+    localStorage.setItem('transferko-translations', JSON.stringify(updatedTranslations));
+  };
+
+  const updateTranslationsForRoute = (oldId: string, newId: string) => {
+    if (oldId === newId) return;
+    
+    const existingTranslations = JSON.parse(localStorage.getItem('transferko-translations') || '{}');
+    
+    ['sr', 'en', 'ru'].forEach(lang => {
+      if (existingTranslations[lang]?.routes?.[oldId]) {
+        existingTranslations[lang].routes[newId] = existingTranslations[lang].routes[oldId];
+        delete existingTranslations[lang].routes[oldId];
+      }
+      if (existingTranslations[lang]?.whatsappMessages?.[oldId]) {
+        existingTranslations[lang].whatsappMessages[newId] = existingTranslations[lang].whatsappMessages[oldId];
+        delete existingTranslations[lang].whatsappMessages[oldId];
+      }
+    });
+
+    localStorage.setItem('transferko-translations', JSON.stringify(existingTranslations));
+  };
+
+  const removeTranslationsForRoute = (routeId: string) => {
+    const existingTranslations = JSON.parse(localStorage.getItem('transferko-translations') || '{}');
+    
+    ['sr', 'en', 'ru'].forEach(lang => {
+      if (existingTranslations[lang]?.routes) {
+        delete existingTranslations[lang].routes[routeId];
+      }
+      if (existingTranslations[lang]?.whatsappMessages) {
+        delete existingTranslations[lang].whatsappMessages[routeId];
+      }
+    });
+
+    localStorage.setItem('transferko-translations', JSON.stringify(existingTranslations));
   };
 
   const getRouteName = (routeId: string) => {
@@ -205,6 +268,28 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-3xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-y-auto">
+        {/* Notification */}
+        {notification && (
+          <div className={`fixed top-4 right-4 z-60 p-4 rounded-xl shadow-lg flex items-center gap-3 ${
+            notification.type === 'success' 
+              ? 'bg-green-100 border border-green-400 text-green-700' 
+              : 'bg-red-100 border border-red-400 text-red-700'
+          }`}>
+            {notification.type === 'success' ? (
+              <Check className="h-5 w-5" />
+            ) : (
+              <AlertCircle className="h-5 w-5" />
+            )}
+            <span className="font-medium">{notification.message}</span>
+            <button
+              onClick={() => setNotification(null)}
+              className="ml-2 hover:opacity-70"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
         <div className="p-6 border-b border-gray-200 flex justify-between items-center">
           <h2 className="text-2xl font-bold text-slate-800">Admin Panel - Upravljanje Cenama</h2>
           <button
@@ -426,6 +511,15 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   {editingId === route.id && editingData ? (
                     <div className="space-y-3">
                       <div>
+                        <label className="block text-xs font-medium text-slate-600 mb-1">ID</label>
+                        <input
+                          type="text"
+                          value={editingData.id}
+                          onChange={(e) => setEditingData(prev => prev ? { ...prev, id: e.target.value } : null)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-lime-400 focus:border-transparent text-sm"
+                        />
+                      </div>
+                      <div>
                         <label className="block text-xs font-medium text-slate-600 mb-1">Cena</label>
                         <input
                           type="text"
@@ -482,6 +576,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           <Edit3 className="h-4 w-4" />
                         </button>
                       </div>
+                      <div className="text-xs text-slate-600 font-medium mb-2">
+                        ID: {route.id}
+                      </div>
                       <div className="text-xs text-slate-600 font-medium">
                         {route.priceDescription || 'po vozilu (do 3 osobe + 1500 po osobi)'}
                       </div>
@@ -494,14 +591,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             <div className="mt-8 p-4 bg-lime-50 rounded-xl">
               <h4 className="font-bold text-slate-800 mb-2">Napomene:</h4>
               <ul className="text-sm text-slate-600 space-y-1">
-                <li>• Cene se čuvaju lokalno u browseru</li>
+                <li>• Cene se čuvaju lokalno u browseru (u produkciji bi se čuvale na serveru)</li>
                 <li>• Kliknite "Sačuvaj" da primenite izmene</li>
                 <li>• "Resetuj" vraća sve cene na početne vrednosti</li>
                 <li>• Izmene će biti vidljive odmah na sajtu</li>
                 <li>• Možete dodati nove transfere sa "Dodaj Transfer" dugmetom</li>
                 <li>• ID mora biti jedinstven (npr. novi-sad-pariz)</li>
-                <li>• Novi transferi se automatski čuvaju kada ih dodate</li>
-                <li>• Možete editovati sve podatke klikom na edit dugme</li>
+                <li>• Možete editovati sve podatke uključujući ID klikom na edit dugme</li>
+                <li>• Promene ID-a će automatski ažurirati i prevode</li>
               </ul>
             </div>
           </div>
